@@ -5,9 +5,10 @@ from __future__ import print_function
 
 import tensorflow as tf
 import numpy as np
-import math, os
-import tensorflow.examples.tutorials.mnist.input_data as input_data
-import tensorflow
+import math
+import os
+import tensorflow_core.examples.tutorials.mnist.input_data as input_data
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '3'
 
 np.random.seed(10)
 shuffle_indices = np.random.permutation(np.arange(784))
@@ -39,14 +40,10 @@ class TPRNN(object):
         self.y_one_hot = tf.one_hot(self.y, config.n_classes)
         self.para_trainable_list = []
 
-        '''
-        self.embedding = tf.Variable(tf.random_normal([config.vocab_size , config.embedding_size] , stddev = 0.1) , trainable = config.embedding_trainable , name = 'embedding')
-        # self.sess.run(tf.assign(self.embedding , config.matrix))
-        self.initial_hidden_states = tf.nn.embedding_lookup(self.embedding , self.x)
-        self.initial_hidden_states = tf.nn.dropout(self.initial_hidden_states , self.keep_prob)
-        '''
+
 
         # every tree layer and ite layer parameter
+        # C -> cell state, H -> hidden state, ite -> aggregate state
         self.w_in_h = [[] for _ in range(config.n_layers)]
         self.w_out_h = [[] for _ in range(config.n_layers)]
         self.w_in_c = [[] for _ in range(config.n_layers)]
@@ -78,9 +75,9 @@ class TPRNN(object):
 
         with tf.variable_scope('MultiLSTM'):
             # 11.0
-            self.lstm_cells = [tf.nn.rnn_cell.LSTMCell(config.hidden_size, state_is_tuple=True, forget_bias=0.1) for _
-                               in range(config.n_layers)]
-            # self.lstm_cells = [tf.contrib.rnn.BasicLSTMCell(config.hidden_size , state_is_tuple = True ,forget_bias = 0.1) for _ in range(config.n_layers)]
+            self.lstm_cells = [tf.nn.rnn_cell.LSTMCell(config.hidden_size, state_is_tuple=True, forget_bias=0.1)
+                               for _ in range(config.n_layers)]
+
             self.lstm_outputs = []
             '''
             x = tf.identity(self.initial_hidden_states)
@@ -94,14 +91,14 @@ class TPRNN(object):
                 counter = 0  # calculate the aggregate times for last moment
                 cs = []  # save a layer memory cell for feeding to next time
                 hs = []
-                tree_height = int(math.ceil(math.log(config.windows_size[l], config.agg_num[l])))
+                tree_height = int(math.ceil(math.log(config.windows_size[l], config.agg_num[l]))) # 当前层里面的树高
                 agg_cs = [[] for _ in range(tree_height)]  # save a layer aggregate result
                 agg_hs = [[] for _ in range(tree_height)]
                 agg_ite = []  # save the window root of every layer
                 initial_state = self.lstm_cells[l].zero_state(tf.shape(x)[0], tf.float32)
 
                 with tf.variable_scope('LSTM_%d' % (l)):
-                    for t in range(time_length):
+                    for t in range(time_length): # 遍历一张图片的所有pixel
                         if t == 0:
                             _, (c, h) = self.lstm_cells[l](x[:, t, :], initial_state)
                             cs.append(c)
@@ -110,7 +107,7 @@ class TPRNN(object):
                             continue
                         tf.get_variable_scope().reuse_variables()
 
-                        agg_times = self._general_count_agg_times(counter, config.agg_num[l])
+                        agg_times = self._general_count_agg_times(counter, config.agg_num[l]) # 聚合的层级
                         # print(t , counter , agg_times)
                         if agg_times >= 1:
                             # handle the first aggreate layer of tree for every node
@@ -130,7 +127,7 @@ class TPRNN(object):
                         # else:
                         #     _ , (c,h) = self.lstm_cells[l](x[:,t,:],(cs[t-1], hs[t-1]))
 
-                        # handle the window boundary , the last node of window must be tree height 
+                        # handle the window boundary, the last node of window must be tree height
                         if counter >= config.windows_size[l]:
                             for i in range(agg_times, tree_height):
                                 # the first layer of tree has remain some node need to aggregate
@@ -141,7 +138,8 @@ class TPRNN(object):
                                     # agg_cs[i].append(agg_c)
                                     # agg_hs[i].append(agg_h)
                                     x_next.append(agg_h)
-                                # has remain some node which not aggregate that need to aggregate for creating a tree root
+                                # has remain some node which not aggregate
+                                # that need to aggregate for creating a tree root
                                 else:
                                     remain = len(agg_cs[i - 1]) % config.agg_num[l]
                                     if remain:
@@ -166,7 +164,8 @@ class TPRNN(object):
                         cs.append(c)
                         hs.append(h)
                         counter += 1
-                        # handle the last node's aggregate time of sequence
+
+                    # handle the last node's aggregate time of sequence
                     last_tree_height = int(math.ceil(math.log(counter, config.agg_num[l])))
                     agg_times = self._general_count_agg_times(counter, config.agg_num[l])
                     if agg_times >= 1:
@@ -266,7 +265,7 @@ class TPRNN(object):
     def _self_agg(self, nodes, layer, up_dim=3, stddev=0.1, sign='c'):
         self.counts += 1
         n_nodes = len(nodes)
-        if n_nodes < config.agg_num[layer]:
+        if n_nodes < config.agg_num[layer]: # TODO：len_zeros 的含义是什么
             len_zeros = config.agg_num[layer] - n_nodes
         else:
             len_zeros = 0
@@ -334,13 +333,13 @@ class Config(object):
         self.n_classes = 10  # the class num
         self.hidden_size = hidden_size  # the hidden size of tprnn
         self.n_layers = n_layers  # the number of tprnn layer
-        self.windows_size = windows_size  # the parameter L (L=T/N)
-        self.agg_num = agg_num  # the parameter of aggregation granularity $g$
+        self.windows_size = windows_size  # the parameter L (L=T/N) 也即 一个子金字塔可以处理多少个输入
+        self.agg_num = agg_num  # the parameter of aggregation granularity 也即 多少个隐藏态生成一个聚合态(aggregate)
         self.lr = 1e-3
         self.lr_decay = 0.99
         self.keep_prob = keep_prob  # dropout rate
         self.max_grad_norm = 3
-        self.batch_size = 50
+        self.batch_size = 500
         self.max_step = max_step
         self.up_dim = 3
         self.seed = 1234
@@ -353,11 +352,11 @@ if __name__ == "__main__":
 
     # ----------------------------params------------------------------------
     time_length = 784
-    hidden_size = 100
-    n_layers = 3
+    hs = 100 # hidden_size
+    nl = 3 # n_layers
     windows_size = [49, 16, 4]
     agg_num = [7, 4, 2]
-    keep_prob = 1.0
+    kp = 1.0 # keep_prob
     max_step = 220000
     fold_num = 10
 
@@ -430,4 +429,3 @@ if __name__ == "__main__":
 
             print('The result:')
             print('max_dev_acc : %f , max_test_acc : %f' % (max_dev_acc, max_test_acc))
-    print('\n\n----------------------------------------------------------------------\n\n')
